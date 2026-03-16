@@ -3,10 +3,45 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 import plotly.graph_objects as go
+from streamlit_autorefresh import st_autorefresh
 
 from services.news      import fetch_articles
 from services.sentiment import analyze_articles, aggregate_sentiment
 
+
+# ── Cached data fetching ──────────────────────────────────────────────────────
+# Cache prevents hammering Yahoo Finance on every refresh
+# ttl = time to live in seconds before cache expires
+
+@st.cache_data(ttl=60)
+def fetch_price_data(ticker: str, start, end):
+    """Fetch price history — cached 60 seconds."""
+    try:
+        data = yf.Ticker(ticker.upper()).history(
+            start=pd.Timestamp(start) if start else None,
+            end=pd.Timestamp(end),
+        )
+        if data.empty:
+            # Fallback to period-based fetch if date range fails
+            data = yf.Ticker(ticker.upper()).history(period="1y")
+        return data
+    except Exception:
+        try:
+            return yf.Ticker(ticker.upper()).history(period="1y")
+        except Exception:
+            return pd.DataFrame()
+
+
+@st.cache_data(ttl=60)
+def fetch_ticker_info(ticker: str) -> dict:
+    """Fetch ticker metadata — cached 60 seconds."""
+    try:
+        return yf.Ticker(ticker.upper()).info
+    except Exception:
+        return {}
+
+
+# ── UI helpers ────────────────────────────────────────────────────────────────
 
 def _show_sentiment_gauge(summary: dict):
     fig = go.Figure(go.Indicator(
@@ -76,6 +111,7 @@ def _stats_bar(info):
     pe     = info.get("trailingPE", "—")
 
     def fmt(n):
+        if not n: return "—"
         if n >= 1e12: return f"${n/1e12:.2f}T"
         if n >= 1e9:  return f"${n/1e9:.2f}B"
         if n >= 1e6:  return f"${n/1e6:.2f}M"
@@ -120,30 +156,61 @@ def _stats_bar(info):
     """, unsafe_allow_html=True)
 
 
+# ── Main page ─────────────────────────────────────────────────────────────────
+
 def show_stock_dashboard():
+    # Auto-refresh every 60 seconds
+    st_autorefresh(interval=60 * 1000, limit=100, key="price_refresh")
+
+    # Live clock in sidebar
+    from datetime import datetime
+    st.sidebar.markdown(f"""
+    <div style="font-family:'JetBrains Mono',monospace; font-size:0.65rem;
+                color:#2D3748; text-align:center; padding:8px 0;
+                border-top:1px solid #1E2D45; margin-top:16px;">
+        <span style="color:#00D4AA;">●</span> LIVE
+        &nbsp;·&nbsp; {datetime.now().strftime("%H:%M:%S")}
+        &nbsp;·&nbsp; refreshes every 60s
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Sidebar inputs
+    st.sidebar.markdown("""
+    <div style="font-size:0.65rem; font-weight:700; letter-spacing:0.14em;
+                text-transform:uppercase; color:#0066FF; margin-bottom:12px;">
+        — Market Data
+    </div>
+    """, unsafe_allow_html=True)
+
     ticker     = st.sidebar.text_input("TICKER SYMBOL", "TSLA")
     start_date = st.sidebar.date_input("FROM", value=None)
     end_date   = st.sidebar.date_input("TO")
 
     # ── Fetch data ────────────────────────────────────────────────────────
     with st.spinner(f"Fetching {ticker.upper()}..."):
-        data = yf.Ticker(ticker.upper()).history(
-            start=pd.Timestamp(start_date) if start_date else None,
-            end=pd.Timestamp(end_date),
-        )
+        data = fetch_price_data(ticker, start_date, end_date)
+        info = fetch_ticker_info(ticker)
 
-    if data.empty:
-        st.error(f"No data for **{ticker.upper()}**. Check the symbol and date range.")
+    if data is None or data.empty:
+        st.error(
+            f"**Unable to fetch data for {ticker.upper()}** — "
+            "Yahoo Finance is rate limiting this server. "
+            "Please wait 30 seconds and try again."
+        )
+        st.info(
+            "💡 **Tip:** If this keeps happening, try a different ticker "
+            "or refresh the page. Yahoo Finance's free API limits cloud deployments."
+        )
         return
 
-    info           = yf.Ticker(ticker.upper()).info
-    current_price  = info.get("currentPrice", info.get("regularMarketPrice", float(data["Close"].iloc[-1])))
+    current_price  = info.get("currentPrice", info.get("regularMarketPrice",
+                               float(data["Close"].iloc[-1])))
     previous_close = info.get("previousClose", current_price)
     company_name   = info.get("shortName", ticker.upper())
     delta          = current_price - previous_close
     pct_change     = (delta / previous_close * 100) if previous_close else 0
 
-    # ── Header + stats bar ────────────────────────────────────────────────
+    # ── Header + stats ────────────────────────────────────────────────────
     _page_header(ticker, company_name, current_price, delta, pct_change)
     _stats_bar(info)
 
@@ -214,16 +281,19 @@ def show_stock_dashboard():
         )
 
     with financials_tab:
-        stock = yf.Ticker(ticker.upper())
-        st.markdown('<div class="section-label">Balance Sheet</div>',
-                    unsafe_allow_html=True)
-        st.dataframe(stock.balance_sheet, use_container_width=True)
-        st.markdown('<div class="section-label">Income Statement</div>',
-                    unsafe_allow_html=True)
-        st.dataframe(stock.income_stmt, use_container_width=True)
-        st.markdown('<div class="section-label">Cash Flow</div>',
-                    unsafe_allow_html=True)
-        st.dataframe(stock.cashflow, use_container_width=True)
+        try:
+            stock = yf.Ticker(ticker.upper())
+            st.markdown('<div class="section-label">Balance Sheet</div>',
+                        unsafe_allow_html=True)
+            st.dataframe(stock.balance_sheet, use_container_width=True)
+            st.markdown('<div class="section-label">Income Statement</div>',
+                        unsafe_allow_html=True)
+            st.dataframe(stock.income_stmt, use_container_width=True)
+            st.markdown('<div class="section-label">Cash Flow</div>',
+                        unsafe_allow_html=True)
+            st.dataframe(stock.cashflow, use_container_width=True)
+        except Exception:
+            st.warning("Financial statements unavailable — Yahoo Finance rate limit. Try again shortly.")
 
     with news_tab:
         st.markdown(f'<div class="section-label">News Sentiment — {ticker.upper()}</div>',
@@ -277,7 +347,8 @@ def show_stock_dashboard():
                 </div>
                 <a href="{row['url']}" target="_blank"
                    style="font-size:0.88rem; font-weight:600; color:#CBD5E0;
-                          text-decoration:none; line-height:1.4;">
+                          text-decoration:none; line-height:1.4; display:block;
+                          margin-bottom:8px;">
                     {row['title']}
                 </a>
                 <p style="font-size:0.75rem; color:#4A5568; margin-top:6px;
