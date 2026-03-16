@@ -10,6 +10,7 @@ def fetch_articles(ticker: str, api_key: str, limit: int = 10) -> pd.DataFrame:
         "apiKey":   api_key,
         "pageSize": limit,
         "sortBy":   "publishedAt",
+        "language": "en",
     }
     try:
         response = requests.get(NEWS_API_BASE, params=params, timeout=10)
@@ -35,4 +36,10 @@ def fetch_articles(ticker: str, api_key: str, limit: int = 10) -> pd.DataFrame:
     df = pd.DataFrame(articles)
     df["publishedAt"] = pd.to_datetime(df["publishedAt"])
     df = df.sort_values("publishedAt", ascending=False).head(limit)
+    
+    df = df[df["description"].notna()]           
+    df = df[df["description"].str.strip() != ""]  
+    
+    df = df.head(limit)
     return df
+
