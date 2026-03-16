@@ -1,6 +1,6 @@
 # 📈 Portfolio Management & Stock Intelligence Platform
 
-**Live Demo:** https://sb-portfolio-management.streamlit.app
+**Live Demo:** https://portfolio-management-dashboard.streamlit.app
 
 A full-stack investment platform built with Python and Streamlit that combines real-time market data, AI-powered news sentiment analysis, event-driven portfolio intelligence, and Modern Portfolio Theory optimization — with persistent user data stored on AWS DynamoDB.
 
