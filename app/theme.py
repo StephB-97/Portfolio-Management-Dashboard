@@ -17,11 +17,17 @@ def apply_theme():
         color: #E2E8F0 !important;
         font-family: 'Inter', sans-serif !important;
     }
+                
+    .main {
+        overflow-y: auto !important;
+    }
+    section[data-testid="stSidebar"] {
+        overflow-y: auto !important;
+    }
 
     /* Hide Streamlit's default menu and footer */
     #MainMenu       { visibility: hidden; }
     footer          { visibility: hidden; }
-    header          { visibility: hidden; }
     .stDeployButton { display: none; }
                 
                 /* ── Buttons ── */
